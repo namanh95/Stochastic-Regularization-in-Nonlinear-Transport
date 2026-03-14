@@ -1,0 +1,6 @@
+Table 1: L2 Errors Between the SALT Ensemble Mean and the Deterministic Viscous Limit
+Scaling Parameter (ε)	L2 Error
+0.4000	4.047452e-03
+0.2000	8.892597e-03
+0.1000	1.219453e-02
+0.0500	7.956118e-03
