@@ -1,0 +1,283 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# =========================================================
+# Numerical illustration of Theorem 2:
+# Covariance–Viscosity Equivalence in 1D
+#
+# This script computes:
+#   1. Deterministic transport:      v_t + u v_x = 0
+#   2. Viscous limit:                v_t + u v_x = nu_eff v_xx
+#   3. SALT ensemble mean proxy:     dv = -u v_x dt - xi^eps(x) v_x dW + nu_eff v_xx dt
+#
+# It then visualizes:
+#   - Final-time slices
+#   - Space-time heatmaps
+#   - L2 error between ensemble mean and viscous limit
+# =========================================================
+
+np.random.seed(42)
+
+# ---------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------
+nx = 256
+L = 2.0 * np.pi
+dx = L / nx
+x = np.linspace(0.0, L, nx, endpoint=False)
+
+T = 0.20
+dt = 2.0e-4
+nt = int(T / dt)
+tgrid = np.linspace(0.0, T, nt + 1)
+
+u_adv = 1.0
+nu_eff = 0.08
+eps_list = [0.40, 0.20, 0.10, 0.05]
+n_paths = 200
+
+# Snapshot stride for heatmaps
+store_every = 10
+n_store = nt // store_every + 1
+
+# ---------------------------------------------------------
+# Initial condition
+# ---------------------------------------------------------
+v0 = np.exp(-0.5 * ((x - np.pi) / 0.45)**2) * (1.0 + 0.15 * np.cos(2.0 * x))
+
+# ---------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------
+def grad_central(v, dx):
+    return (np.roll(v, -1) - np.roll(v, 1)) / (2.0 * dx)
+
+def laplacian(v, dx):
+    return (np.roll(v, -1) - 2.0 * v + np.roll(v, 1)) / (dx**2)
+
+# ---------------------------------------------------------
+# Deterministic inviscid evolution
+# ---------------------------------------------------------
+def solve_inviscid_full(v_init, nt, dt, dx, u, store_every):
+    v = v_init.copy()
+    V = np.zeros((nt // store_every + 1, len(v)))
+    V[0] = v.copy()
+
+    s = 1
+    for n in range(1, nt + 1):
+        vx = grad_central(v, dx)
+        v = v - dt * u * vx
+
+        if n % store_every == 0:
+            V[s] = v.copy()
+            s += 1
+
+    return v, V
+
+# ---------------------------------------------------------
+# Deterministic viscous evolution
+# ---------------------------------------------------------
+def solve_viscous_full(v_init, nt, dt, dx, u, nu, store_every):
+    v = v_init.copy()
+    V = np.zeros((nt // store_every + 1, len(v)))
+    V[0] = v.copy()
+
+    s = 1
+    for n in range(1, nt + 1):
+        vx = grad_central(v, dx)
+        vxx = laplacian(v, dx)
+        v = v - dt * u * vx + dt * nu * vxx
+
+        if n % store_every == 0:
+            V[s] = v.copy()
+            s += 1
+
+    return v, V
+
+# ---------------------------------------------------------
+# One SALT realization
+# ---------------------------------------------------------
+def solve_salt_path_full(v_init, nt, dt, dx, u, nu, eps, store_every):
+    v = v_init.copy()
+    xi = np.sqrt(2.0 * nu) * np.sin(x / eps)
+
+    V = np.zeros((nt // store_every + 1, len(v)))
+    V[0] = v.copy()
+
+    s = 1
+    for n in range(1, nt + 1):
+        dW = np.random.normal(0.0, np.sqrt(dt))
+        vx = grad_central(v, dx)
+        vxx = laplacian(v, dx)
+
+        # Ito proxy consistent with Theorem 2 illustration
+        v = v - dt * u * vx - xi * vx * dW + dt * nu * vxx
+
+        if n % store_every == 0:
+            V[s] = v.copy()
+            s += 1
+
+    return v, V
+
+# ---------------------------------------------------------
+# SALT ensemble mean over many paths
+# ---------------------------------------------------------
+def ensemble_mean_salt_full(v_init, nt, dt, dx, u, nu, eps, n_paths, store_every):
+    mean_final = np.zeros_like(v_init)
+    mean_store = np.zeros((nt // store_every + 1, len(v_init)))
+    sq_mean_final = np.zeros_like(v_init)
+
+    for _ in range(n_paths):
+        vT, V = solve_salt_path_full(v_init, nt, dt, dx, u, nu, eps, store_every)
+        mean_final += vT
+        sq_mean_final += vT**2
+        mean_store += V
+
+    mean_final /= n_paths
+    mean_store /= n_paths
+    std_final = np.sqrt(np.maximum(sq_mean_final / n_paths - mean_final**2, 0.0))
+
+    return mean_final, std_final, mean_store
+
+# ---------------------------------------------------------
+# Compute deterministic references
+# ---------------------------------------------------------
+v_det, V_det = solve_inviscid_full(v0, nt, dt, dx, u_adv, store_every)
+v_visc, V_visc = solve_viscous_full(v0, nt, dt, dx, u_adv, nu_eff, store_every)
+
+# ---------------------------------------------------------
+# Compute SALT ensemble means for all epsilons
+# ---------------------------------------------------------
+salt_means = {}
+salt_stds = {}
+salt_fields = {}
+errors_L2 = []
+
+for eps in eps_list:
+    mean_eps, std_eps, field_eps = ensemble_mean_salt_full(
+        v0, nt, dt, dx, u_adv, nu_eff, eps, n_paths, store_every
+    )
+    salt_means[eps] = mean_eps
+    salt_stds[eps] = std_eps
+    salt_fields[eps] = field_eps
+
+    err = np.sqrt(dx * np.sum((mean_eps - v_visc)**2))
+    errors_L2.append(err)
+
+# Use smallest epsilon for the main heatmap comparison
+eps_star = eps_list[-1]
+V_salt_star = salt_fields[eps_star]
+mean_star = salt_means[eps_star]
+std_star = salt_stds[eps_star]
+
+# ---------------------------------------------------------
+# Figure 1: final-time comparison + convergence diagnostics
+# ---------------------------------------------------------
+fig1, axs = plt.subplots(2, 2, figsize=(12, 8))
+
+# Panel A
+ax = axs[0, 0]
+ax.plot(x, v0, '--', linewidth=1.5, label='Initial')
+ax.plot(x, v_det, linewidth=2.0, label='Deterministic inviscid')
+ax.plot(x, v_visc, linewidth=2.0, label=r'Viscous limit')
+ax.set_title('(A) Deterministic transport vs viscous limit')
+ax.set_xlabel(r'$x$')
+ax.set_ylabel(r'$v(x,T)$')
+ax.grid(True, linestyle=':', alpha=0.6)
+ax.legend()
+
+# Panel B
+ax = axs[0, 1]
+ax.plot(x, v_visc, linewidth=2.2, label='Viscous limit')
+ax.plot(x, mean_star, linewidth=2.0, label=fr'SALT ensemble mean ($\varepsilon={eps_star}$)')
+ax.fill_between(
+    x,
+    mean_star - std_star,
+    mean_star + std_star,
+    alpha=0.20,
+    label=r'$\pm 1$ std. dev.'
+)
+ax.set_title('(B) SALT ensemble mean and fluctuation band')
+ax.set_xlabel(r'$x$')
+ax.set_ylabel(r'$v(x,T)$')
+ax.grid(True, linestyle=':', alpha=0.6)
+ax.legend()
+
+# Panel C
+ax = axs[1, 0]
+ax.plot(x, v_visc, 'k--', linewidth=2.4, label='Viscous limit')
+for eps in eps_list:
+    ax.plot(x, salt_means[eps], linewidth=1.8, label=fr'Ensemble mean, $\varepsilon={eps}$')
+ax.set_title(r'(C) Convergence of ensemble mean as $\varepsilon \to 0$')
+ax.set_xlabel(r'$x$')
+ax.set_ylabel(r'$v(x,T)$')
+ax.grid(True, linestyle=':', alpha=0.6)
+ax.legend(fontsize=9)
+
+# Panel D
+ax = axs[1, 1]
+ax.plot(eps_list, errors_L2, marker='o', linewidth=2.0)
+ax.set_title(r'(D) $L^2$ error to viscous limit')
+ax.set_xlabel(r'$\varepsilon$')
+ax.set_ylabel(r'$\| \mathbb{E}[v^\varepsilon(\cdot,T)] - v_{\mathrm{visc}}(\cdot,T)\|_{L^2}$')
+ax.grid(True, linestyle=':', alpha=0.6)
+
+plt.tight_layout()
+plt.show()
+
+# ---------------------------------------------------------
+# Figure 2: space-time heatmaps
+# ---------------------------------------------------------
+fig2, axs = plt.subplots(1, 3, figsize=(15, 4.8), sharey=True)
+
+extent = [x[0], x[-1], tgrid[0], tgrid[-1]]
+
+# Common color limits for fair comparison
+vmin = min(V_det.min(), V_salt_star.min(), V_visc.min())
+vmax = max(V_det.max(), V_salt_star.max(), V_visc.max())
+
+im0 = axs[0].imshow(
+    V_det,
+    aspect='auto',
+    origin='lower',
+    extent=extent,
+    vmin=vmin,
+    vmax=vmax
+)
+axs[0].set_title('(A) Deterministic inviscid transport')
+axs[0].set_xlabel(r'$x$')
+axs[0].set_ylabel(r'$t$')
+
+im1 = axs[1].imshow(
+    V_salt_star,
+    aspect='auto',
+    origin='lower',
+    extent=extent,
+    vmin=vmin,
+    vmax=vmax
+)
+axs[1].set_title(fr'(B) SALT ensemble mean ($\varepsilon={eps_star}$)')
+axs[1].set_xlabel(r'$x$')
+
+im2 = axs[2].imshow(
+    V_visc,
+    aspect='auto',
+    origin='lower',
+    extent=extent,
+    vmin=vmin,
+    vmax=vmax
+)
+axs[2].set_title('(C) Viscous limit')
+axs[2].set_xlabel(r'$x$')
+
+cbar = fig2.colorbar(im2, ax=axs.ravel().tolist(), shrink=0.92)
+cbar.set_label(r'$v(x,t)$')
+
+plt.tight_layout()
+plt.show()
+
+# ---------------------------------------------------------
+# Console summary
+# ---------------------------------------------------------
+print("\nL2 errors between SALT ensemble mean and viscous limit:")
+for eps, err in zip(eps_list, errors_L2):
+    print(f"epsilon = {eps:0.4f}   L2 error = {err:0.6e}")
