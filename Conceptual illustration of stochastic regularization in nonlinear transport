@@ -1,0 +1,87 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# ==========================================
+# Conceptual illustration for:
+# "Stochastic Regularization in Nonlinear Transport"
+#
+# This figure is NOT a proof and NOT a direct numerical
+# solution of the SALT transport equation.
+# It is a schematic visualization of:
+#   (A) deterministic gradient amplification
+#   (B) covariance-induced stochastic smoothing
+# consistent with the mechanism in Theorem 1.
+# ==========================================
+
+# 1. Spatial and temporal grids
+x = np.linspace(-2.0, 2.0, 300)
+t = np.linspace(0.0, 1.0, 300)
+X, T = np.meshgrid(x, t)
+
+# 2. Deterministic concentration proxy
+# Width shrinks in time, representing increasing gradient concentration.
+w0 = 1.0
+eps = 0.02
+w_det = w0 * (1.0 - 0.92 * T) + eps
+
+# 3. Stochastic regularization proxy
+# Effective smoothing induced by the covariance structure.
+# This is a visualization proxy for the emergent dissipative mechanism.
+nu_eff = 0.12
+w_stoc = np.sqrt(w_det**2 + 4.0 * nu_eff * T)
+
+# 4. Gradient profile proxy
+# Use a smooth transport front whose gradient sharpens as width decreases.
+def gradient_profile(x_grid, width):
+    return (1.0 / width) * (1.0 / np.cosh(x_grid / width))**2
+
+xi_det = gradient_profile(X, w_det)
+xi_stoc = gradient_profile(X, w_stoc)
+
+# 5. Common color scale for fair comparison
+zmax = max(np.max(xi_det), np.max(xi_stoc))
+vmin, vmax = 0.0, zmax
+
+# 6. Plot
+fig = plt.figure(figsize=(13.5, 5.8))
+
+ax1 = fig.add_subplot(1, 2, 1, projection="3d")
+surf1 = ax1.plot_surface(
+    X, T, xi_det,
+    cmap="magma",
+    edgecolor="none",
+    antialiased=True,
+    vmin=vmin,
+    vmax=vmax,
+    alpha=0.96
+)
+ax1.set_title("(A) Deterministic gradient amplification", fontsize=13, pad=14, fontweight="bold")
+ax1.set_xlabel("State $x$", fontsize=11, labelpad=8)
+ax1.set_ylabel("Time $t$", fontsize=11, labelpad=8)
+ax1.set_zlabel(r"Gradient magnitude $\xi(x,t)$", fontsize=11, labelpad=8)
+ax1.view_init(elev=26, azim=-58)
+ax1.set_zlim(0, zmax)
+
+ax2 = fig.add_subplot(1, 2, 2, projection="3d")
+surf2 = ax2.plot_surface(
+    X, T, xi_stoc,
+    cmap="viridis",
+    edgecolor="none",
+    antialiased=True,
+    vmin=vmin,
+    vmax=vmax,
+    alpha=0.96
+)
+ax2.set_title("(B) Stochastic smoothing proxy", fontsize=13, pad=14, fontweight="bold")
+ax2.set_xlabel("State $x$", fontsize=11, labelpad=8)
+ax2.set_ylabel("Time $t$", fontsize=11, labelpad=8)
+ax2.set_zlabel(r"Gradient magnitude $\xi(x,t)$", fontsize=11, labelpad=8)
+ax2.view_init(elev=26, azim=-58)
+ax2.set_zlim(0, zmax)
+
+# 7. Layout
+plt.subplots_adjust(left=0.04, right=0.96, bottom=0.08, top=0.90, wspace=0.08)
+
+# 8. Save
+plt.savefig("stochastic_regularization_illustration.pdf", format="pdf", dpi=300, bbox_inches="tight")
+plt.show()
