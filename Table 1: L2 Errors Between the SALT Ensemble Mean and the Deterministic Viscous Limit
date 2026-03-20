@@ -1,6 +1,7 @@
-Table 1: L2 Errors Between the SALT Ensemble Mean and the Deterministic Viscous Limit
-Scaling Parameter (ε)	L2 Error
-0.4000	4.047452e-03
-0.2000	8.892597e-03
-0.1000	1.219453e-02
-0.0500	7.956118e-03
+Table 1: L2 errors between mean equation and viscous limit
+epsilon = 0.4000   L2 error = 3.339585e-03
+epsilon = 0.2000   L2 error = 1.665080e-03
+epsilon = 0.1000   L2 error = 8.313715e-04
+epsilon = 0.0500   L2 error = 4.153944e-04
+
+Estimated convergence rate alpha = 1.002337
