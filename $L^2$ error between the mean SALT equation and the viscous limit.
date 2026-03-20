@@ -1,0 +1,189 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# =========================================================
+# Real convergence test for Theorem 2 in 1D
+#
+# We solve:
+#
+#   Mean equation:
+#   m_t + u m_x = (1/2) sum_k (xi_k^eps d_x)(xi_k^eps d_x m)
+#
+# and compare it to the viscous limit:
+#
+#   v_t + u v_x = nu_eff v_xx
+#
+# The SALT family is chosen so that:
+#   Q^eps(x) = sum_k (xi_k^eps)^2 -> 2 nu_eff  uniformly,
+#   b^eps(x) = sum_k xi_k^eps (xi_k^eps)_x -> 0 uniformly.
+# =========================================================
+
+np.random.seed(42)
+
+# ---------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------
+nx = 2048
+L = 2.0 * np.pi
+x = np.linspace(0.0, L, nx, endpoint=False)
+dx = L / nx
+
+T = 0.05
+dt = 2.0e-5
+nt = int(T / dt)
+
+u_adv = 1.0
+nu_eff = 0.08
+eps_list = [0.40, 0.20, 0.10, 0.05]
+
+# Smooth modulation ensuring Q^eps -> 2 nu_eff
+def r_profile(x):
+    return 0.5 * np.cos(x)
+
+# ---------------------------------------------------------
+# Initial condition
+# ---------------------------------------------------------
+v0 = np.exp(-0.5 * ((x - np.pi) / 0.45) ** 2) * (1.0 + 0.15 * np.cos(2.0 * x))
+
+# ---------------------------------------------------------
+# Spectral derivatives on the periodic torus
+# ---------------------------------------------------------
+k = 2.0 * np.pi * np.fft.fftfreq(nx, d=dx)
+
+def grad(v):
+    return np.fft.ifft(1j * k * np.fft.fft(v)).real
+
+def lap(v):
+    return np.fft.ifft(-(k ** 2) * np.fft.fft(v)).real
+
+# ---------------------------------------------------------
+# SALT transport fields satisfying Theorem 2 assumptions
+# ---------------------------------------------------------
+def salt_fields(eps, x, nu):
+    r = r_profile(x)
+    A = np.sqrt(2.0 * nu * (1.0 + eps * r))
+
+    xi1 = A * np.sin(x / eps)
+    xi2 = A * np.cos(x / eps)
+
+    return xi1, xi2
+
+# ---------------------------------------------------------
+# RHS for mean equation:
+#   m_t + u m_x = (1/2) sum_k (xi_k d_x)(xi_k d_x m)
+#
+# Expanded form:
+#   (1/2) sum_k [ xi_k^2 m_xx + xi_k (xi_k)_x m_x ]
+# ---------------------------------------------------------
+def rhs_mean(m, eps):
+    xi1, xi2 = salt_fields(eps, x, nu_eff)
+    xi1_x = grad(xi1)
+    xi2_x = grad(xi2)
+
+    mx = grad(m)
+    mxx = lap(m)
+
+    ito_corr = (
+        0.5 * (xi1 ** 2) * mxx
+        + 0.5 * xi1 * xi1_x * mx
+        + 0.5 * (xi2 ** 2) * mxx
+        + 0.5 * xi2 * xi2_x * mx
+    )
+
+    return -u_adv * mx + ito_corr
+
+# ---------------------------------------------------------
+# RHS for viscous limit:
+#   v_t + u v_x = nu_eff v_xx
+# ---------------------------------------------------------
+def rhs_visc(v):
+    vx = grad(v)
+    vxx = lap(v)
+    return -u_adv * vx + nu_eff * vxx
+
+# ---------------------------------------------------------
+# RK4 time stepping
+# ---------------------------------------------------------
+def solve_mean_equation(v_init, eps):
+    m = v_init.copy()
+    for _ in range(nt):
+        k1 = rhs_mean(m, eps)
+        k2 = rhs_mean(m + 0.5 * dt * k1, eps)
+        k3 = rhs_mean(m + 0.5 * dt * k2, eps)
+        k4 = rhs_mean(m + dt * k3, eps)
+        m = m + (dt / 6.0) * (k1 + 2*k2 + 2*k3 + k4)
+    return m
+
+def solve_viscous_limit(v_init):
+    v = v_init.copy()
+    for _ in range(nt):
+        k1 = rhs_visc(v)
+        k2 = rhs_visc(v + 0.5 * dt * k1)
+        k3 = rhs_visc(v + 0.5 * dt * k2)
+        k4 = rhs_visc(v + dt * k3)
+        v = v + (dt / 6.0) * (k1 + 2*k2 + 2*k3 + k4)
+    return v
+
+# ---------------------------------------------------------
+# Solve
+# ---------------------------------------------------------
+v_visc = solve_viscous_limit(v0)
+
+mean_eps = {}
+errors_L2 = []
+
+for eps in eps_list:
+    m_eps = solve_mean_equation(v0, eps)
+    mean_eps[eps] = m_eps
+
+    err = np.sqrt(dx * np.sum((m_eps - v_visc) ** 2))
+    errors_L2.append(err)
+
+# ---------------------------------------------------------
+# Estimate convergence rate alpha from log-log fit
+# ---------------------------------------------------------
+log_eps = np.log(np.array(eps_list))
+log_err = np.log(np.array(errors_L2))
+alpha, intercept = np.polyfit(log_eps, log_err, 1)
+
+# ---------------------------------------------------------
+# Plot final-time slices
+# ---------------------------------------------------------
+fig, axs = plt.subplots(1, 2, figsize=(12, 4.8))
+
+ax = axs[0]
+ax.plot(x, v_visc, 'k--', linewidth=2.5, label='Viscous limit')
+for eps in eps_list:
+    ax.plot(x, mean_eps[eps], linewidth=1.8, label=fr'$m^\varepsilon$, $\varepsilon={eps}$')
+ax.set_title('Final-time profiles: mean equation vs viscous limit')
+ax.set_xlabel(r'$x$')
+ax.set_ylabel(r'$v(x,T)$')
+ax.grid(True, linestyle=':', alpha=0.6)
+ax.legend(fontsize=9)
+
+ax = axs[1]
+ax.loglog(eps_list, errors_L2, 'o-', linewidth=2.0, markersize=6, label='L2 error')
+ax.loglog(
+    eps_list,
+    np.exp(intercept) * np.array(eps_list) ** alpha,
+    '--',
+    linewidth=1.8,
+    label=fr'fit: $E(\varepsilon)\sim \varepsilon^{{{alpha:.3f}}}$'
+)
+ax.set_title(r'Convergence to the viscous limit')
+ax.set_xlabel(r'$\varepsilon$')
+ax.set_ylabel(r'$E(\varepsilon)=\|m^\varepsilon(\cdot,T)-v_{\rm visc}(\cdot,T)\|_{L^2}$')
+ax.grid(True, which='both', linestyle=':', alpha=0.6)
+ax.legend()
+
+plt.tight_layout()
+plt.show()
+
+# ---------------------------------------------------------
+# Print table
+# ---------------------------------------------------------
+print("\nTable 1: L2 errors between mean equation and viscous limit")
+for eps, err in zip(eps_list, errors_L2):
+    print(f"epsilon = {eps:0.4f}   L2 error = {err:0.6e}")
+
+print(f"\nEstimated convergence rate alpha = {alpha:.6f}")
